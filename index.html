@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Clasificador de Rayos X: Neumonía vs Normal</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.5.0"></script>
+  <style>
+    body { font-family: sans-serif; text-align: center; padding: 20px; }
+    #container { display: flex; flex-direction: column; align-items: center; }
+    canvas { border: 2px solid #333; border-radius: 8px; margin: 10px; }
+    #resultado {
+      font-size: 1.5rem;
+      font-weight: bold;
+      padding: 15px;
+      border-radius: 8px;
+      margin-top: 20px;
+      background-color: #f0f0f0;
+      min-width: 300px;
+    }
+    .normal { color: #0066cc; background-color: #e6f2ff; }
+    .neumonia { color: #c0392b; background-color: #ffebee; }
+    button, input[type="file"] {
+      font-size: 1rem;
+      padding: 10px 20px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      margin: 8px;
+    }
+    #debug {
+      margin-top: 20px;
+      font-family: monospace;
+      text-align: left;
+      background-color: #f8f8f8;
+      padding: 10px;
+      border-radius: 4px;
+      max-width: 600px;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <h1>Clasificador de Rayos X: Neumonía vs Normal</h1>
+    <input type="file" id="imagen" accept="image/*">
+    <canvas id="canvas" width="300" height="225"></canvas>
+    <button onclick="predecirImagen()">Predecir Imagen</button>
+    <div id="resultado">Selecciona una imagen para clasificar.</div>
+    <div id="debug"></div>
+  </div>
+
+  <script>
+    const modelo = {
+      instancia: null,
+      cargado: false,
+      inputShape: [1, 100, 100, 1]
+    };
+
+    const elementos = {
+      imagen: document.getElementById('imagen'),
+      canvas: document.getElementById('canvas'),
+      resultado: document.getElementById('resultado'),
+      debug: document.getElementById('debug')
+    };
+
+    let imagenCargada = null;
+
+    async function cargarModelo() {
+      try {
+        elementos.debug.innerHTML += '⏳ Cargando modelo...<br>';
+        modelo.instancia = await tf.loadGraphModel("model.json");
+        modelo.cargado = true;
+        elementos.debug.innerHTML += '✅ Modelo cargado correctamente<br>';
+        elementos.resultado.textContent = 'Modelo listo. Selecciona una imagen.';
+      } catch (error) {
+        elementos.resultado.textContent = '❌ Error cargando el modelo';
+        elementos.debug.innerHTML += `❌ Error al cargar modelo: ${error.message}<br>`;
+        console.error("Error al cargar modelo:", error);
+      }
+    }
+
+    elementos.imagen.addEventListener('change', function(e) {
+      const archivo = e.target.files[0];
+      if (!archivo) return;
+      const lector = new FileReader();
+      lector.onload = function(evento) {
+        const img = new window.Image();
+        img.onload = function() {
+          // Dibuja la imagen en el canvas
+          const ctx = elementos.canvas.getContext('2d');
+          ctx.clearRect(0, 0, elementos.canvas.width, elementos.canvas.height);
+          ctx.drawImage(img, 0, 0, elementos.canvas.width, elementos.canvas.height);
+          imagenCargada = img;
+          elementos.resultado.textContent = "Imagen cargada. Haz click en 'Predecir Imagen'.";
+        };
+        img.src = evento.target.result;
+      };
+      lector.readAsDataURL(archivo);
+    });
+
+    async function predecirImagen() {
+      if (!modelo.cargado) {
+        elementos.resultado.textContent = 'Modelo no cargado.';
+        return;
+      }
+      if (!imagenCargada) {
+        elementos.resultado.textContent = 'No se ha cargado una imagen.';
+        return;
+      }
+
+      // Redimensionar la imagen a 100x100 y convertir a escala de grises
+      const canvasTemp = document.createElement('canvas');
+      canvasTemp.width = 100;
+      canvasTemp.height = 100;
+      const ctxTemp = canvasTemp.getContext('2d');
+      ctxTemp.drawImage(imagenCargada, 0, 0, 100, 100);
+
+      let tensor;
+      try {
+        tensor = tf.tidy(() => {
+          return tf.browser.fromPixels(canvasTemp)
+            .mean(2)
+            .toFloat()
+            .div(255.0)
+            .expandDims(0)
+            .expandDims(-1);
+        });
+
+        const prediccion = await modelo.instancia.predict(tensor).data();
+        const resultado = prediccion[0];
+        const esNeumonia = resultado >= 0.5;
+        actualizarUI(esNeumonia, resultado);
+        tensor.dispose();
+      } catch (error) {
+        elementos.resultado.textContent = '❌ Error en predicción.';
+        elementos.debug.innerHTML += `❌ Error en predicción: ${error.message}<br>`;
+        console.error("Error en predicción:", error);
+      }
+    }
+
+    function actualizarUI(esNeumonia, resultado) {
+      if (esNeumonia) {
+        elementos.resultado.innerHTML = `🫁 Neumonía <br><span style="font-size:1rem;">Confianza: ${(resultado*100).toFixed(2)}%</span>`;
+        elementos.resultado.className = "neumonia";
+      } else {
+        elementos.resultado.innerHTML = `🟦 Normal <br><span style="font-size:1rem;">Confianza: ${((1-resultado)*100).toFixed(2)}%</span>`;
+        elementos.resultado.className = "normal";
+      }
+    }
+
+    window.addEventListener('load', cargarModelo);
+  </script>
+</body>
+</html>
